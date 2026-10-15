@@ -1,145 +1,127 @@
-# RaceDay API — Part 2: RESTful API Development
+ RaceDay
 
-This is the ASP.NET Core Web API that implements the plan submitted in Part 1
-(`/docs/raceday_erd.png`, `/docs/api-endpoint-plan.md`, `/docs/raceday_schema.sql`). It covers
-authentication, user profiles, events, categories, enrolments, results, and payments, built
-Code-First with Entity Framework Core against SQL Server.
+A REST API for running, walking and cycling events, built with ASP.NET Core, Entity Framework Core (Code-First) and SQL Server.
 
-## Project structure
+Organisers create events and categories. Participants enrol in categories. Organisers record results.
 
-```
-RaceDay/
-├── RaceDay.sln
-├── src/
-│   └── RaceDay.Api/
-│       ├── Controllers/      7 controllers — Auth, Users, Events, Categories, Enrolments, Results, Payments
-│       ├── Models/            EF Core entities + status "enum" classes (matches the Part 1 ERD)
-│       ├── DTOs/               Request/response shapes, grouped by resource
-│       ├── Data/                RaceDayDbContext (Fluent API constraints) + DbSeeder
-│       ├── Services/            ICurrentUserService — reads the logged-in user off the session cookie
-│       ├── Program.cs           DI, EF Core, cookie auth, Swagger, migration-on-startup
-│       └── appsettings*.json
-├── tests/
-│   └── RaceDay.Api.Tests/      xUnit + WebApplicationFactory integration tests (EF Core InMemory)
-└── .github/workflows/
-    └── dotnet-ci.yml           Builds + runs all tests on every push/PR
-```
+## Project parts
 
-## Before you run it: generate the EF Core migration
+- **Part 1 (planning):** the `docs/` folder holds the ERD (`raceday_erd.png` and `.pdf`), the API endpoint plan (`api-endpoint-plan.md`) and the SQL script (`raceday_schema.sql`).
+- **Part 2 (API):** the `src/RaceDay.Api` project, with tests in `tests/RaceDay.Api.Tests`.
 
-This solution was written in a sandboxed environment with no internet access to NuGet, so the
-code below could be carefully written and reviewed line-by-line, but **could not actually be
-compiled or run here** — `dotnet restore` fails outright (no route to `api.nuget.org`). You must
-do the first build, the migration, and the test run yourself, in Visual Studio or the CLI, on a
-machine with normal internet access. This also means one thing is deliberately **not** included:
-the EF Core Migrations folder, since scaffolding a migration requires compiling the project first.
+## How to run
 
-Once you can restore packages, generate it with:
+You need the .NET 8 SDK, SQL Server Express and Visual Studio 2022 (or a terminal).
 
-```bash
-cd RaceDay
-dotnet tool install --global dotnet-ef   # if you don't already have it
-dotnet ef migrations add InitialCreate --project src/RaceDay.Api --startup-project src/RaceDay.Api
-```
+1. **Connection string.** In `src/RaceDay.Api/appsettings.Development.json`:
 
-This produces a `Migrations/` folder inside `src/RaceDay.Api`. Commit it — the schema it generates
-must match `/docs/raceday_schema.sql` (it does, by design: every model, `[Column(TypeName=...)]`
-attribute, and Fluent API check constraint in `Data/RaceDayDbContext.cs` was written to mirror that
-script table-for-table).
+   ```
+   Server=LabVM2049939\\SQLEXPRESS;Database=RaceDayDB;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=True;
+   ```
 
-## Running it
+   On another machine, change `Server=` to your own server name.
 
-1. Point `appsettings.json` / `appsettings.Development.json` at your SQL Server instance (defaults
-   to LocalDB in Development).
-2. `dotnet ef migrations add InitialCreate ...` (above), if you haven't already.
-3. `dotnet run --project src/RaceDay.Api`. On startup the app runs `Database.Migrate()` and then
-   seeds the same sample data as the Part 1 SQL script (2 organisers, 2 participants, 3 events,
-   5 categories, 4 enrolments, 1 result, 4 payments) — but only if `Users` is empty, so it's safe
-   to restart the app without duplicating data.
-4. Open `/swagger` (the launch profile does this automatically). Every endpoint is listed there
-   with its purpose, request body, and response codes, pulled from the XML doc comments on each
-   controller action.
+2. **Create the migration** (once), then commit the `Migrations` folder.
 
-Seeded login for trying things out in Swagger: `naledi.khumalo@raceday.co.za` (Organiser) or
-`thabo.nkosi@example.com` (Participant), password `Password123!` for all seeded users.
+   In Visual Studio's Package Manager Console, with `RaceDay.Api` as the default project:
 
-## How authentication and roles work
+   ```
+   Add-Migration InitialCreate
+   Update-Database
+   ```
 
-The brief asks for "session management to maintain the user's authenticated state and role for
-all subsequent requests" rather than a stateless token scheme, so this uses **cookie
-authentication** (`Microsoft.AspNetCore.Authentication.Cookies`): `/api/auth/login` and
-`/api/auth/register` issue an HttpOnly session cookie carrying the user's id and role as claims;
-every subsequent request on the same client sends that cookie back automatically, and ASP.NET
-Core's authentication middleware re-establishes `HttpContext.User` from it on every request — that
-*is* server-recognised session state, just implemented through the cookie rather than
-`HttpContext.Session`'s in-memory dictionary.
+   Or in a terminal:
 
-- `[Authorize]` on a controller/action requires any logged-in user; a missing/invalid cookie
-  returns **401 Unauthorized** (configured explicitly in `Program.cs`, since this is an API with no
-  login page to redirect to).
-- `[Authorize(Roles = "Organiser")]` / `[Authorize(Roles = "Participant")]` / `[Authorize(Roles =
-  "Admin")]` restrict an endpoint to one role; a logged-in user of the wrong role gets
-  **403 Forbidden**.
-- Beyond role, several endpoints also check **ownership** in the handler itself — e.g. an
-  Organiser can only edit/delete their *own* events, categories and results, and a Participant can
-  only cancel their *own* enrolment. These checks live in the controllers (`ICurrentUserService`
-  exposes the caller's id/role) since role-based attributes alone can't express "owns this row."
-- Passwords are hashed with ASP.NET Core Identity's `PasswordHasher<User>` (PBKDF2 under the hood)
-  — the plaintext password is never stored or logged.
+   ```
+   dotnet tool install --global dotnet-ef
+   dotnet ef migrations add InitialCreate --project src/RaceDay.Api --startup-project src/RaceDay.Api
+   dotnet ef database update --project src/RaceDay.Api --startup-project src/RaceDay.Api
+   ```
 
-## How the implementation maps to the Part 1 plan
+3. **Start the API:**
 
-Every route in `/docs/api-endpoint-plan.md` is implemented as planned, with one explained addition:
+   ```
+   dotnet run --project src/RaceDay.Api
+   ```
 
-**`Events.Distance` and `Events.Type`** — Part 2's functional requirements state "each event must
-capture a name, description, date, location, distance, and event type (run, walk, or cycle)",
-which the Part 1 ERD didn't include (distance only existed per-category there). Rather than let the
-implementation silently drift from the submitted plan, Part 1's ERD, SQL script and endpoint plan
-have been updated to add these two columns to `Events`, with this note added as the explanation the
-brief asks for. No other table changed — Payments, Results, Enrolments, Categories and Users are
-unchanged from Part 1.
+4. **Open Swagger** at `/swagger` to view and test every endpoint in the browser.
 
-**Payments** was already in the Part 1 plan as an addition beyond the required minimum (needed
-because `Categories.EntryFee` implies something has to track whether that fee was paid), and is
-implemented here the same way: `POST`/`GET /api/enrolments/{id}/payments`.
+If you already ran the Part 1 SQL script, drop `RaceDayDB` first (`DROP DATABASE RaceDayDB;`) or use a different database name, otherwise the migration fails with "table already exists".
 
-## Tests
+## Demo logins
 
-`tests/RaceDay.Api.Tests` runs real HTTP requests against the full pipeline (controllers, cookie
-auth, authorization, EF Core) via `WebApplicationFactory<Program>`, swapping SQL Server for the EF
-Core InMemory provider so no database is needed to run them. Covers, with both success and failure
-cases:
+Sample data is added on first run. The password for all of them is `Password123!`.
 
-| File | Covers |
+| Role | Email |
 |---|---|
-| `AuthTests.cs` | Registration (valid, duplicate email, disallowed self-registered role), login (correct/wrong password, unknown email), accessing a protected route while logged out |
-| `RoleAccessTests.cs` | Every role boundary rejected: Participant creating an event, anonymous creating an event, Organiser enrolling in their own category, non-Admins listing all users, Participant recording a result |
-| `EventManagementTests.cs` | Organiser create/update/delete on their own event, a different organiser blocked from editing it, public read access, invalid event type rejected |
-| `EnrolmentsTests.cs` | Enrol → bib number assigned, shows up in "my enrolments", duplicate enrolment rejected, category-full rejected, non-existent category rejected, organiser roster view, cancel by owner vs. by a different participant |
-| `UserProfileAndResultsTests.cs` | Profile update persists, result capture shows on the public leaderboard, duplicate result rejected, a participant's own results are scoped to them |
+| Organiser | naledi.khumalo@raceday.co.za |
+| Organiser | johan.vdm@raceday.co.za |
+| Participant | thabo.nkosi@example.com |
+| Participant | lerato.dlamini@example.com |
 
-Run them with:
+## Authentication and roles
 
-```bash
+Users register as an Organiser or Participant (Admin accounts cannot self-register). Passwords are hashed. Logging in sets a session cookie that holds the user's id and role for every later request.
+
+- Not logged in: `401 Unauthorized`
+- Wrong role: `403 Forbidden`
+- Right role but not your event or enrolment: `403 Forbidden`
+
+| Role | Can do |
+|---|---|
+| Public | Browse events, categories and results |
+| Participant | Edit own profile, enrol in categories, cancel own enrolment, pay, view own enrolments and results |
+| Organiser | Edit own profile, manage own events and categories, view rosters, record results |
+| Admin | List, view and delete users |
+
+## Endpoints
+
+The full list with request bodies and responses is in `docs/api-endpoint-plan.md` and in Swagger.
+
+| Area | Routes |
+|---|---|
+| Auth | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout` |
+| Profile | `GET` and `PUT /api/users/me` |
+| Users (Admin) | `GET /api/users`, `GET` and `DELETE /api/users/{id}` |
+| Events | `GET /api/events`, `GET /api/events/{id}`, `POST /api/events`, `PUT` and `DELETE /api/events/{id}` |
+| Categories | `GET` and `POST /api/events/{eventId}/categories`, `PUT` and `DELETE /api/categories/{id}` |
+| Enrolments | `POST` and `GET /api/categories/{categoryId}/enrolments`, `GET /api/users/me/enrolments`, `PUT` and `DELETE /api/enrolments/{id}` |
+| Results | `GET /api/categories/{categoryId}/results`, `GET /api/users/me/results`, `POST /api/enrolments/{enrolmentId}/results`, `PUT /api/results/{id}` |
+| Payments | `POST` and `GET /api/enrolments/{enrolmentId}/payments` |
+
+## Database
+
+Six tables, matching the Part 1 ERD:
+
+- **Users**: every account, with a `Role` column
+- **Events**: owned by an organiser (name, date, location, description, distance, type, status)
+- **Categories**: belong to an event (distance or age group, fee, maximum participants)
+- **Enrolments**: link a participant to a category (bib number, status); one enrolment per participant per category
+- **Results**: one optional result per enrolment (finish time, position, status)
+- **Payments**: one optional payment per enrolment (amount, method, status)
+
+## Changes from the original Part 1 plan
+
+Part 2 requires every event to have a distance and an event type (run, walk or cycle). The original ERD did not include these, so `DistanceKm` and `EventType` were added to the `Events` table in the ERD, SQL script and endpoint plan. Nothing else changed.
+
+A `Payments` table was added beyond the six-table minimum, because categories have an entry fee that needs to be tracked.
+
+## Testing
+
+```
 dotnet test RaceDay.sln
 ```
 
+The xUnit tests send real requests through the full API (authentication, roles, database) using an in-memory database, so SQL Server is not needed. They cover success and failure cases for:
+
+- Registration and login
+- Event management by organisers
+- Role rejection (wrong role, not logged in, not the owner)
+- Enrolments being recorded correctly
+- User profile and results
+
 ## CI/CD
 
-`.github/workflows/dotnet-ci.yml` runs on every push and pull request to any branch: restores,
-builds in Release, runs the full test suite, and uploads the `.trx` test results as a build
-artifact. Once you've pushed this to GitHub, **add a screenshot of the green Actions run here**
-(Actions tab → the workflow run → the green checkmark), since it couldn't be captured from this
-sandboxed environment:
+The GitHub Actions workflow `.github/workflows/dotnet-ci.yml` builds the solution and runs all tests on every push and pull request.
 
-> _[Insert screenshot of a successful GitHub Actions run here once pushed]_
-
-## Known gaps to close before submitting
-
-- [ ] Run `dotnet ef migrations add InitialCreate` and commit the generated `Migrations/` folder
-      (see above — not included for the reason explained there).
-- [ ] Confirm `dotnet build` and `dotnet test` pass locally — they were reviewed file-by-file but
-      never compiled, since this sandbox has no NuGet access.
-- [ ] Push with a minimum of 20 meaningful commits on your own GitHub account, in a clearly named
-      branch or subfolder for Part 2, per the brief's Section 6.
-- [ ] Paste the green-build screenshot into this README once CI has run on GitHub.
+Green build evidence: see the Actions tab of this repository (link the latest passing run here).
